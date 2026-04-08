@@ -36,7 +36,7 @@ class AegisBot(commands.Bot):
     HIGH_RISK_CLEAN_CAP = 100
     HIGH_RISK_RATE_WINDOW_SECONDS = 20
     HIGH_RISK_RATE_LIMIT_UNITS = 6
-    PRESENCE_ROTATION_MINUTES = 3
+    PRESENCE_REFRESH_MINUTES = 2
     DANGEROUS_PERMISSION_NAMES = (
         "administrator",
         "manage_guild",
@@ -68,10 +68,10 @@ class AegisBot(commands.Bot):
             max_messages=5000,
             allowed_mentions=discord.AllowedMentions.none(),
             activity=discord.Activity(
-                type=discord.ActivityType.competing,
-                name="Threat Response",
-                details="Aegis Security Core",
-                state="Anti-Nuke + AutoMod",
+                type=discord.ActivityType.playing,
+                name="Aegis Security Grid",
+                details="Invite to Join",
+                state="Shield Network",
             ),
         )
         self.message_cache: dict[tuple[int, int], deque[tuple[str, datetime]]] = defaultdict(
@@ -85,7 +85,6 @@ class AegisBot(commands.Bot):
         self.antinuke_freezes: dict[int, datetime] = {}
         self.high_risk_command_usage: dict[tuple[int, int], deque[tuple[datetime, int]]] = defaultdict(deque)
         self.presence_started_at_ms = int(utcnow().timestamp() * 1000)
-        self.presence_rotation_index = 0
 
     async def resolve_prefix(
         self,
@@ -110,39 +109,69 @@ class AegisBot(commands.Bot):
     def set_guild_prefix(self, guild_id: int, prefix: str) -> None:
         self.guild_prefix_cache[guild_id] = prefix
 
-    def _build_presence_candidates(self) -> list[discord.Activity]:
-        guild_count = len(self.guilds)
-        member_count = sum(guild.member_count or 0 for guild in self.guilds)
-        monitored_servers = f"{guild_count} server" if guild_count == 1 else f"{guild_count} servers"
+    def _build_invite_url(self) -> str | None:
+        if self.config.client_id is None:
+            return None
 
-        return [
-            discord.Activity(
-                type=discord.ActivityType.watching,
-                name=monitored_servers,
-                details="Threat Monitoring",
-                state=f"{member_count:,} members protected",
-                timestamps={"start": self.presence_started_at_ms},
-            ),
-            discord.Activity(
-                type=discord.ActivityType.competing,
-                name="Threat Response",
-                details="Anti-Nuke + AutoMod",
-                state="Mention me with help",
-                timestamps={"start": self.presence_started_at_ms},
-            ),
-            discord.Activity(
-                type=discord.ActivityType.playing,
-                name="Defense Grid",
-                details="Incident Logging Online",
-                state="Real-time moderation ready",
-                timestamps={"start": self.presence_started_at_ms},
-            ),
-        ]
+        permissions = discord.Permissions(
+            view_audit_log=True,
+            manage_guild=True,
+            manage_roles=True,
+            manage_channels=True,
+            manage_webhooks=True,
+            manage_messages=True,
+            kick_members=True,
+            ban_members=True,
+            moderate_members=True,
+            read_message_history=True,
+            send_messages=True,
+            move_members=True,
+        )
+        return discord.utils.oauth_url(self.config.client_id, permissions=permissions)
+
+    def _build_rich_presence(self) -> discord.Activity:
+        guild_count = len(self.guilds)
+        party_current = max(1, min(guild_count, 6))
+        party_max = 6 if guild_count <= 6 else min(guild_count, 99)
+        monitored_servers = f"Monitoring {guild_count} server" if guild_count == 1 else f"Monitoring {guild_count} servers"
+
+        payload: dict[str, Any] = {
+            "type": discord.ActivityType.playing,
+            "name": "Aegis",
+            "details": "Invite to Join",
+            "state": monitored_servers,
+            "timestamps": {"start": self.presence_started_at_ms},
+            "party": {
+                "id": "aegis-guard-network",
+                "size": [party_current, party_max],
+            },
+        }
+
+        if self.config.client_id is not None:
+            payload["application_id"] = self.config.client_id
+
+        invite_url = self._build_invite_url()
+        if invite_url is not None:
+            payload["details_url"] = invite_url
+        if self.config.docs_base_url:
+            payload["state_url"] = self.config.docs_base_url
+
+        assets: dict[str, str] = {}
+        if self.config.presence_large_image:
+            assets["large_image"] = self.config.presence_large_image
+        if self.config.presence_large_text:
+            assets["large_text"] = self.config.presence_large_text
+        if self.config.presence_small_image:
+            assets["small_image"] = self.config.presence_small_image
+        if self.config.presence_small_text:
+            assets["small_text"] = self.config.presence_small_text
+        if assets:
+            payload["assets"] = assets
+
+        return discord.Activity(**payload)
 
     async def refresh_presence(self) -> None:
-        candidates = self._build_presence_candidates()
-        activity = candidates[self.presence_rotation_index % len(candidates)]
-        self.presence_rotation_index += 1
+        activity = self._build_rich_presence()
         try:
             await self.change_presence(status=discord.Status.online, activity=activity)
         except discord.HTTPException:
@@ -161,13 +190,13 @@ class AegisBot(commands.Bot):
         ):
             await self.load_extension(extension)
         self.scheduler.start()
-        self.presence_rotator.start()
+        self.presence_updater.start()
 
     async def close(self) -> None:
         if self.scheduler.is_running():
             self.scheduler.cancel()
-        if self.presence_rotator.is_running():
-            self.presence_rotator.cancel()
+        if self.presence_updater.is_running():
+            self.presence_updater.cancel()
         await self.db.close()
         await super().close()
 
@@ -887,11 +916,11 @@ class AegisBot(commands.Bot):
     async def before_scheduler(self) -> None:
         await self.wait_until_ready()
 
-    @tasks.loop(minutes=PRESENCE_ROTATION_MINUTES)
-    async def presence_rotator(self) -> None:
+    @tasks.loop(minutes=PRESENCE_REFRESH_MINUTES)
+    async def presence_updater(self) -> None:
         await self.refresh_presence()
 
-    @presence_rotator.before_loop
-    async def before_presence_rotator(self) -> None:
+    @presence_updater.before_loop
+    async def before_presence_updater(self) -> None:
         await self.wait_until_ready()
         await self.refresh_presence()
