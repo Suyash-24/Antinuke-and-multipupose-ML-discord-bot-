@@ -54,7 +54,7 @@ class SettingsCog(commands.Cog):
         await ctx.send(
             view=build_panel(
                 "Setup Commands",
-                "Use `^setup muted` to create or register the muted role used by Aegis.",
+                f"Use `{ctx.clean_prefix}setup muted` to create or register the muted role used by Aegis.",
                 tone="info",
             )
         )
@@ -109,6 +109,65 @@ class SettingsCog(commands.Cog):
                 fields=[
                     ("Role", role.mention),
                     ("Channels Updated", str(updated_channels)),
+                ],
+            )
+        )
+
+    @commands.command()
+    @require_manage_guild()
+    async def prefix(self, ctx: commands.Context[AegisBot], *, value: str | None = None) -> None:
+        current_prefix = await self.bot.get_guild_prefix(ctx.guild.id)
+
+        if value is None:
+            await ctx.send(
+                view=build_panel(
+                    "Prefix",
+                    "Aegis command prefix for this server.",
+                    tone="info",
+                    fields=[
+                        ("Current", f"`{current_prefix}`"),
+                        ("Change", f"`{ctx.clean_prefix}prefix <new-prefix>`"),
+                        ("Reset", f"`{ctx.clean_prefix}prefix default`"),
+                    ],
+                )
+            )
+            return
+
+        normalized = value.strip()
+        if normalized.lower() in {"default", "reset"}:
+            normalized = self.bot.config.prefix
+
+        if not normalized:
+            raise commands.BadArgument("Prefix cannot be empty.")
+
+        if any(char.isspace() for char in normalized):
+            raise commands.BadArgument("Prefix cannot contain spaces.")
+
+        if len(normalized) > 5:
+            raise commands.BadArgument("Prefix must be between 1 and 5 characters.")
+
+        if normalized == current_prefix:
+            await ctx.send(
+                view=build_panel(
+                    "Prefix Unchanged",
+                    "That prefix is already active for this server.",
+                    tone="info",
+                    fields=[("Prefix", f"`{current_prefix}`")],
+                )
+            )
+            return
+
+        await self.bot.db.update_guild_settings(ctx.guild.id, prefix=normalized)
+        self.bot.set_guild_prefix(ctx.guild.id, normalized)
+        await ctx.send(
+            view=build_panel(
+                "Prefix Updated",
+                "Aegis saved the new command prefix for this server.",
+                tone="success",
+                fields=[
+                    ("Old", f"`{current_prefix}`"),
+                    ("New", f"`{normalized}`"),
+                    ("Example", f"`{normalized}help`"),
                 ],
             )
         )
@@ -189,7 +248,7 @@ class SettingsCog(commands.Cog):
                 "Current moderation, logging, and AutoMod configuration for this server.",
                 tone="info",
                 fields=[
-                    ("Prefix", "`^`"),
+                    ("Prefix", f"`{settings.prefix}`"),
                     ("Mod Role", render_role(settings.mod_role_id)),
                     ("Muted Role", render_role(settings.muted_role_id)),
                     ("Mod Log", render_channel(settings.mod_log_channel_id)),

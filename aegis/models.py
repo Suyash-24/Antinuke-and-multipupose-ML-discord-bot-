@@ -52,6 +52,7 @@ class TrustSubjectType(StrEnum):
 @dataclass(slots=True, frozen=True)
 class GuildSettings:
     guild_id: int
+    prefix: str = "^"
     mod_role_id: int | None = None
     muted_role_id: int | None = None
     mod_log_channel_id: int | None = None

@@ -19,9 +19,12 @@ class GeneralCog(commands.Cog):
         guild_count = len(self.bot.guilds)
         user_count = len(self.bot.users)
         command_count = len(self.bot.commands)
+        active_prefix = self.bot.config.prefix
+        if ctx.guild is not None:
+            active_prefix = await self.bot.get_guild_prefix(ctx.guild.id)
         thumbnail_url = self.bot.user.display_avatar.url if self.bot.user else None
         fields = [
-            ("Prefix", f"`{self.bot.config.prefix}`"),
+            ("Prefix", f"`{active_prefix}`"),
             ("Servers", str(guild_count)),
             ("Uptime", uptime),
             ("Users", str(user_count)),

@@ -48,6 +48,10 @@ class AegisBot(commands.Bot):
     )
 
     def __init__(self, config: AppConfig) -> None:
+        self.config = config
+        self.db = Database(config.database_path)
+        self.guild_prefix_cache: dict[int, str] = {}
+
         intents = discord.Intents.default()
         intents.guilds = True
         intents.members = True
@@ -57,7 +61,7 @@ class AegisBot(commands.Bot):
         intents.voice_states = True
 
         super().__init__(
-            command_prefix=commands.when_mentioned_or(config.prefix),
+            command_prefix=self.resolve_prefix,
             intents=intents,
             help_command=None,
             max_messages=5000,
@@ -67,8 +71,6 @@ class AegisBot(commands.Bot):
                 name="moderation signals",
             ),
         )
-        self.config = config
-        self.db = Database(config.database_path)
         self.message_cache: dict[tuple[int, int], deque[tuple[str, datetime]]] = defaultdict(
             lambda: deque(maxlen=20)
         )
@@ -79,6 +81,29 @@ class AegisBot(commands.Bot):
         self.voicemove_sessions: dict[int, dict] = {}
         self.antinuke_freezes: dict[int, datetime] = {}
         self.high_risk_command_usage: dict[tuple[int, int], deque[tuple[datetime, int]]] = defaultdict(deque)
+
+    async def resolve_prefix(
+        self,
+        bot: commands.Bot,
+        message: discord.Message,
+    ) -> list[str]:
+        prefix = self.config.prefix
+        if message.guild is not None and self.db.connection is not None:
+            prefix = await self.get_guild_prefix(message.guild.id)
+        return commands.when_mentioned_or(prefix)(bot, message)
+
+    async def get_guild_prefix(self, guild_id: int) -> str:
+        cached = self.guild_prefix_cache.get(guild_id)
+        if cached is not None:
+            return cached
+
+        settings = await self.db.fetch_guild_settings(guild_id)
+        prefix = settings.prefix or self.config.prefix
+        self.guild_prefix_cache[guild_id] = prefix
+        return prefix
+
+    def set_guild_prefix(self, guild_id: int, prefix: str) -> None:
+        self.guild_prefix_cache[guild_id] = prefix
 
     async def setup_hook(self) -> None:
         await self.db.connect()

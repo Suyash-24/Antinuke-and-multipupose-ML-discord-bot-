@@ -51,6 +51,7 @@ class Database:
             """
             CREATE TABLE IF NOT EXISTS guild_settings (
                 guild_id INTEGER PRIMARY KEY,
+                prefix TEXT NOT NULL DEFAULT '^',
                 mod_role_id INTEGER,
                 muted_role_id INTEGER,
                 mod_log_channel_id INTEGER,
@@ -204,6 +205,7 @@ class Database:
         existing = {str(row["name"]) for row in rows}
 
         missing_columns = {
+            "prefix": "TEXT NOT NULL DEFAULT '^'",
             "anti_copypasta_strikes": "INTEGER NOT NULL DEFAULT 0",
             "resolve_urls": "INTEGER NOT NULL DEFAULT 0",
             "dehoist_char": "TEXT",
@@ -238,6 +240,7 @@ class Database:
             return GuildSettings(guild_id=guild_id)
 
         payload = dict(row)
+        payload["prefix"] = (payload.get("prefix") or "^").strip() or "^"
         payload["raid_mode_enabled"] = bool(payload["raid_mode_enabled"])
         payload["resolve_urls"] = bool(payload.get("resolve_urls", 0))
         payload["antinuke_enabled"] = bool(payload.get("antinuke_enabled", 0))
@@ -252,6 +255,7 @@ class Database:
 
         await self.ensure_guild(guild_id)
         allowed = {
+            "prefix",
             "mod_role_id",
             "muted_role_id",
             "mod_log_channel_id",

@@ -399,6 +399,18 @@ COMMANDS: tuple[CommandDoc, ...] = (
         related=("serverlog", "voicekick"),
     ),
     command(
+        name="prefix",
+        category=SETTINGS.key,
+        slug="prefix",
+        summary="Set the server-specific command prefix.",
+        description="Changes the command prefix used in the current server only. You can also reset it back to the default prefix.",
+        syntax=("^prefix", "^prefix <new-prefix>", "^prefix default"),
+        access="Manage Server permission",
+        examples=("^prefix !", "^prefix ?", "^prefix default"),
+        notes=("Prefix must be 1 to 5 characters and cannot include spaces.",),
+        related=("settings", "help"),
+    ),
+    command(
         name="settings",
         category=SETTINGS.key,
         slug="settings",
