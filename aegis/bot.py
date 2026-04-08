@@ -133,13 +133,13 @@ class AegisBot(commands.Bot):
         guild_count = len(self.guilds)
         party_current = max(1, min(guild_count, 6))
         party_max = 6 if guild_count <= 6 else min(guild_count, 99)
-        monitored_servers = f"Monitoring {guild_count} server" if guild_count == 1 else f"Monitoring {guild_count} servers"
+        server_text = f"{guild_count} server" if guild_count == 1 else f"{guild_count} servers"
 
         payload: dict[str, Any] = {
-            "type": discord.ActivityType.playing,
-            "name": "Aegis",
-            "details": "Invite to Join",
-            "state": monitored_servers,
+            "type": discord.ActivityType.competing,
+            "name": "Aura Shield Mode",
+            "details": "Main Character Security",
+            "state": f"Vibes protected in {server_text}",
             "timestamps": {"start": self.presence_started_at_ms},
             "party": {
                 "id": "aegis-guard-network",
