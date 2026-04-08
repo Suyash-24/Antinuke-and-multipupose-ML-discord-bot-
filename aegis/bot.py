@@ -68,10 +68,9 @@ class AegisBot(commands.Bot):
             max_messages=5000,
             allowed_mentions=discord.AllowedMentions.none(),
             activity=discord.Activity(
-                type=discord.ActivityType.playing,
-                name="Aegis Security Grid",
-                details="Invite to Join",
-                state="Shield Network",
+                type=discord.ActivityType.competing,
+                name="Aura Shield Mode",
+                state="Vibes protected",
             ),
         )
         self.message_cache: dict[tuple[int, int], deque[tuple[str, datetime]]] = defaultdict(
@@ -84,7 +83,7 @@ class AegisBot(commands.Bot):
         self.voicemove_sessions: dict[int, dict] = {}
         self.antinuke_freezes: dict[int, datetime] = {}
         self.high_risk_command_usage: dict[tuple[int, int], deque[tuple[datetime, int]]] = defaultdict(deque)
-        self.presence_started_at_ms = int(utcnow().timestamp() * 1000)
+        self.presence_rotation_index = 0
 
     async def resolve_prefix(
         self,
@@ -109,69 +108,32 @@ class AegisBot(commands.Bot):
     def set_guild_prefix(self, guild_id: int, prefix: str) -> None:
         self.guild_prefix_cache[guild_id] = prefix
 
-    def _build_invite_url(self) -> str | None:
-        if self.config.client_id is None:
-            return None
-
-        permissions = discord.Permissions(
-            view_audit_log=True,
-            manage_guild=True,
-            manage_roles=True,
-            manage_channels=True,
-            manage_webhooks=True,
-            manage_messages=True,
-            kick_members=True,
-            ban_members=True,
-            moderate_members=True,
-            read_message_history=True,
-            send_messages=True,
-            move_members=True,
-        )
-        return discord.utils.oauth_url(self.config.client_id, permissions=permissions)
-
-    def _build_rich_presence(self) -> discord.Activity:
+    def _build_presence_candidates(self) -> list[discord.Activity]:
         guild_count = len(self.guilds)
-        party_current = max(1, min(guild_count, 6))
-        party_max = 6 if guild_count <= 6 else min(guild_count, 99)
         server_text = f"{guild_count} server" if guild_count == 1 else f"{guild_count} servers"
 
-        payload: dict[str, Any] = {
-            "type": discord.ActivityType.competing,
-            "name": "Aura Shield Mode",
-            "details": "Main Character Security",
-            "state": f"Vibes protected in {server_text}",
-            "timestamps": {"start": self.presence_started_at_ms},
-            "party": {
-                "id": "aegis-guard-network",
-                "size": [party_current, party_max],
-            },
-        }
-
-        if self.config.client_id is not None:
-            payload["application_id"] = self.config.client_id
-
-        invite_url = self._build_invite_url()
-        if invite_url is not None:
-            payload["details_url"] = invite_url
-        if self.config.docs_base_url:
-            payload["state_url"] = self.config.docs_base_url
-
-        assets: dict[str, str] = {}
-        if self.config.presence_large_image:
-            assets["large_image"] = self.config.presence_large_image
-        if self.config.presence_large_text:
-            assets["large_text"] = self.config.presence_large_text
-        if self.config.presence_small_image:
-            assets["small_image"] = self.config.presence_small_image
-        if self.config.presence_small_text:
-            assets["small_text"] = self.config.presence_small_text
-        if assets:
-            payload["assets"] = assets
-
-        return discord.Activity(**payload)
+        return [
+            discord.Activity(
+                type=discord.ActivityType.competing,
+                name="Aura Shield Mode",
+                state=f"Vibes protected in {server_text}",
+            ),
+            discord.Activity(
+                type=discord.ActivityType.watching,
+                name="Raid energy",
+                state="Clocked and blocked",
+            ),
+            discord.Activity(
+                type=discord.ActivityType.playing,
+                name="Main Character Security",
+                state=f"Guarding {server_text}",
+            ),
+        ]
 
     async def refresh_presence(self) -> None:
-        activity = self._build_rich_presence()
+        candidates = self._build_presence_candidates()
+        activity = candidates[self.presence_rotation_index % len(candidates)]
+        self.presence_rotation_index += 1
         try:
             await self.change_presence(status=discord.Status.online, activity=activity)
         except discord.HTTPException:

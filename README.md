@@ -22,11 +22,6 @@ Aegis is a Python Discord moderation bot focused on practical server operations:
    - `DISCORD_CLIENT_ID`
    - `AEGIS_DATABASE_PATH`
    - `DOCS_BASE_URL=https://aegis.project-bot.workers.dev` so `^help` links into the published docs site
-   - Optional rich presence assets (must exist in your Discord app assets):
-     - `AEGIS_PRESENCE_LARGE_IMAGE`
-     - `AEGIS_PRESENCE_LARGE_TEXT`
-     - `AEGIS_PRESENCE_SMALL_IMAGE`
-     - `AEGIS_PRESENCE_SMALL_TEXT`
 3. Install the bot:
 
 ```bash
