@@ -68,9 +68,10 @@ class AegisBot(commands.Bot):
             max_messages=5000,
             allowed_mentions=discord.AllowedMentions.none(),
             activity=discord.Activity(
-                type=discord.ActivityType.competing,
-                name="Aura Shield Mode",
-                state="Vibes protected",
+                type=discord.ActivityType.streaming,
+                name="Protecting Communities",
+                state="Stay Safe Fr",
+                url="https://twitch.tv/discord",
             ),
         )
         self.message_cache: dict[tuple[int, int], deque[tuple[str, datetime]]] = defaultdict(
@@ -83,7 +84,6 @@ class AegisBot(commands.Bot):
         self.voicemove_sessions: dict[int, dict] = {}
         self.antinuke_freezes: dict[int, datetime] = {}
         self.high_risk_command_usage: dict[tuple[int, int], deque[tuple[datetime, int]]] = defaultdict(deque)
-        self.presence_rotation_index = 0
 
     async def resolve_prefix(
         self,
@@ -111,28 +111,18 @@ class AegisBot(commands.Bot):
     def _build_presence_candidates(self) -> list[discord.Activity]:
         return [
             discord.Activity(
-                type=discord.ActivityType.competing,
-                name="Aura Shield Mode",
-                state="Vibes protected",
-            ),
-            discord.Activity(
-                type=discord.ActivityType.watching,
-                name="Raid energy",
-                state="Clocked and blocked",
-            ),
-            discord.Activity(
-                type=discord.ActivityType.playing,
-                name="Main Character Security",
-                state="No chaos allowed",
+                type=discord.ActivityType.streaming,
+                name="Protecting Communities",
+                state="Stay Safe Fr",
+                url="https://twitch.tv/discord",
             ),
         ]
 
     async def refresh_presence(self) -> None:
         candidates = self._build_presence_candidates()
-        activity = candidates[self.presence_rotation_index % len(candidates)]
-        self.presence_rotation_index += 1
+        activity = candidates[0]
         try:
-            await self.change_presence(status=discord.Status.online, activity=activity)
+            await self.change_presence(status=discord.Status.idle, activity=activity)
         except discord.HTTPException:
             return
 
