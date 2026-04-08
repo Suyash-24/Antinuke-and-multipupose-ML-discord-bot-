@@ -109,14 +109,11 @@ class AegisBot(commands.Bot):
         self.guild_prefix_cache[guild_id] = prefix
 
     def _build_presence_candidates(self) -> list[discord.Activity]:
-        guild_count = len(self.guilds)
-        server_text = f"{guild_count} server" if guild_count == 1 else f"{guild_count} servers"
-
         return [
             discord.Activity(
                 type=discord.ActivityType.competing,
                 name="Aura Shield Mode",
-                state=f"Vibes protected in {server_text}",
+                state="Vibes protected",
             ),
             discord.Activity(
                 type=discord.ActivityType.watching,
@@ -126,7 +123,7 @@ class AegisBot(commands.Bot):
             discord.Activity(
                 type=discord.ActivityType.playing,
                 name="Main Character Security",
-                state=f"Guarding {server_text}",
+                state="No chaos allowed",
             ),
         ]
 
