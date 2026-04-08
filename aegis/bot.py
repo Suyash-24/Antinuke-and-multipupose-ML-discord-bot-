@@ -36,6 +36,7 @@ class AegisBot(commands.Bot):
     HIGH_RISK_CLEAN_CAP = 100
     HIGH_RISK_RATE_WINDOW_SECONDS = 20
     HIGH_RISK_RATE_LIMIT_UNITS = 6
+    PRESENCE_ROTATION_MINUTES = 3
     DANGEROUS_PERMISSION_NAMES = (
         "administrator",
         "manage_guild",
@@ -67,8 +68,10 @@ class AegisBot(commands.Bot):
             max_messages=5000,
             allowed_mentions=discord.AllowedMentions.none(),
             activity=discord.Activity(
-                type=discord.ActivityType.watching,
-                name="moderation signals",
+                type=discord.ActivityType.competing,
+                name="Threat Response",
+                details="Aegis Security Core",
+                state="Anti-Nuke + AutoMod",
             ),
         )
         self.message_cache: dict[tuple[int, int], deque[tuple[str, datetime]]] = defaultdict(
@@ -81,6 +84,8 @@ class AegisBot(commands.Bot):
         self.voicemove_sessions: dict[int, dict] = {}
         self.antinuke_freezes: dict[int, datetime] = {}
         self.high_risk_command_usage: dict[tuple[int, int], deque[tuple[datetime, int]]] = defaultdict(deque)
+        self.presence_started_at_ms = int(utcnow().timestamp() * 1000)
+        self.presence_rotation_index = 0
 
     async def resolve_prefix(
         self,
@@ -105,6 +110,44 @@ class AegisBot(commands.Bot):
     def set_guild_prefix(self, guild_id: int, prefix: str) -> None:
         self.guild_prefix_cache[guild_id] = prefix
 
+    def _build_presence_candidates(self) -> list[discord.Activity]:
+        guild_count = len(self.guilds)
+        member_count = sum(guild.member_count or 0 for guild in self.guilds)
+        monitored_servers = f"{guild_count} server" if guild_count == 1 else f"{guild_count} servers"
+
+        return [
+            discord.Activity(
+                type=discord.ActivityType.watching,
+                name=monitored_servers,
+                details="Threat Monitoring",
+                state=f"{member_count:,} members protected",
+                timestamps={"start": self.presence_started_at_ms},
+            ),
+            discord.Activity(
+                type=discord.ActivityType.competing,
+                name="Threat Response",
+                details="Anti-Nuke + AutoMod",
+                state="Mention me with help",
+                timestamps={"start": self.presence_started_at_ms},
+            ),
+            discord.Activity(
+                type=discord.ActivityType.playing,
+                name="Defense Grid",
+                details="Incident Logging Online",
+                state="Real-time moderation ready",
+                timestamps={"start": self.presence_started_at_ms},
+            ),
+        ]
+
+    async def refresh_presence(self) -> None:
+        candidates = self._build_presence_candidates()
+        activity = candidates[self.presence_rotation_index % len(candidates)]
+        self.presence_rotation_index += 1
+        try:
+            await self.change_presence(status=discord.Status.online, activity=activity)
+        except discord.HTTPException:
+            return
+
     async def setup_hook(self) -> None:
         await self.db.connect()
         for extension in (
@@ -118,10 +161,13 @@ class AegisBot(commands.Bot):
         ):
             await self.load_extension(extension)
         self.scheduler.start()
+        self.presence_rotator.start()
 
     async def close(self) -> None:
         if self.scheduler.is_running():
             self.scheduler.cancel()
+        if self.presence_rotator.is_running():
+            self.presence_rotator.cancel()
         await self.db.close()
         await super().close()
 
@@ -840,3 +886,12 @@ class AegisBot(commands.Bot):
     @scheduler.before_loop
     async def before_scheduler(self) -> None:
         await self.wait_until_ready()
+
+    @tasks.loop(minutes=PRESENCE_ROTATION_MINUTES)
+    async def presence_rotator(self) -> None:
+        await self.refresh_presence()
+
+    @presence_rotator.before_loop
+    async def before_presence_rotator(self) -> None:
+        await self.wait_until_ready()
+        await self.refresh_presence()
