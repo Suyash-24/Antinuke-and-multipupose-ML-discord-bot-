@@ -1,0 +1,56 @@
+site_name: Aegis Docs
+site_description: Documentation for the Aegis Discord moderation bot.
+site_url: https://aegis.project-bot.workers.dev
+repo_name: Aegis
+theme:
+  name: material
+  language: en
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: blue grey
+  features:
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  font:
+    text: Poppins
+    code: JetBrains Mono
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+
+extra:
+  generator: false
+
+extra_css:
+  - stylesheets/extra.css
+
+not_in_nav: |
+  commands/*.md
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Commands:
+      - Overview: commands/index.md
+      - General: commands/category-general.md
+      - Moderation: commands/category-moderation.md
+      - Settings: commands/category-settings.md
+      - AutoMod: commands/category-automod.md
+      - Anti-Nuke: commands/category-antinuke.md
+  - Systems:
+      - Overview: systems/index.md
+      - Logging: systems/logging.md
+      - Strike Ladder: systems/strike-ladder.md
+      - AutoMod: systems/automod-overview.md
+      - Raid Mode: systems/raid-mode.md
+      - Anti-Nuke: systems/antinuke-overview.md
+      - Trust and Freeze: systems/antinuke-trust-and-freeze.md
+  - FAQ:
+      - Troubleshooting: faq.md

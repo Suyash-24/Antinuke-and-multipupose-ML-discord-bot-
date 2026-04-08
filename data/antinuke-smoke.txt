@@ -1,0 +1,129 @@
+Aegis Anti-Nuke Full Smoke Test Plan
+=
+
+1. Pre-flight baseline and health
+   Commands:
+   - ^antinuke status
+   - ^antinuke incidents 5
+   Expected:
+   - Status panel renders successfully.
+   - Health is Ready, or degraded reasons are clearly listed if permissions/hierarchy are missing.
+   - Incidents command responds without errors.
+
+2. Enable anti-nuke and set log destination
+   Commands:
+   - ^antinuke enable
+   - ^antinuke mode contain
+   - ^antinuke log #antinuke-log
+   - ^antinuke status
+   Expected:
+   - Anti-nuke is enabled.
+   - Mode shows contain.
+   - Anti-nuke log channel is set to #antinuke-log.
+
+3. Threshold commands full coverage
+   Commands:
+   - ^antinuke threshold bot_add 1 60
+   - ^antinuke threshold admin_permission_grant 1 60
+   - ^antinuke threshold channel_create 5 10
+   - ^antinuke threshold channel_delete 2 10
+   - ^antinuke threshold channel_update 5 10
+   - ^antinuke threshold role_create 5 10
+   - ^antinuke threshold role_delete 2 10
+   - ^antinuke threshold role_update 5 10
+   - ^antinuke threshold webhook_create 2 10
+   - ^antinuke threshold webhook_delete 2 10
+   - ^antinuke threshold webhook_update 5 10
+   - ^antinuke threshold guild_update 2 60
+   - ^antinuke status
+   Expected:
+   - Every threshold command succeeds.
+   - Status panel Thresholds section reflects all configured values.
+
+4. Protection toggle full coverage
+   Commands:
+   - ^antinuke protect bot_add off
+   - ^antinuke protect bot_add on
+   - ^antinuke protect admin_permission_grant off
+   - ^antinuke protect admin_permission_grant on
+   - ^antinuke protect channel_create off
+   - ^antinuke protect channel_create on
+   - ^antinuke protect channel_delete off
+   - ^antinuke protect channel_delete on
+   - ^antinuke protect channel_update off
+   - ^antinuke protect channel_update on
+   - ^antinuke protect role_create off
+   - ^antinuke protect role_create on
+   - ^antinuke protect role_delete off
+   - ^antinuke protect role_delete on
+   - ^antinuke protect role_update off
+   - ^antinuke protect role_update on
+   - ^antinuke protect webhook_create off
+   - ^antinuke protect webhook_create on
+   - ^antinuke protect webhook_delete off
+   - ^antinuke protect webhook_delete on
+   - ^antinuke protect webhook_update off
+   - ^antinuke protect webhook_update on
+   - ^antinuke protect guild_update off
+   - ^antinuke protect guild_update on
+   - ^antinuke status
+   Expected:
+   - Each protect off/on command succeeds for all event types.
+   - No invalid-event or validation errors are returned.
+
+5. Trust workflow (server owner only)
+   Commands:
+   - ^antinuke trust
+   - ^antinuke trust add @TrustedUser
+   - ^antinuke trust add @TrustedRole
+   - ^antinuke trust
+   - ^antinuke trust remove @TrustedUser
+   - ^antinuke trust remove @TrustedRole
+   - ^antinuke trust
+   Expected:
+   - Trust add/remove works for both user and role targets.
+   - Trust list reflects each change.
+   - Non-owner callers are blocked from trust commands.
+
+6. Event trigger matrix (all anti-nuke event types)
+   Commands:
+   - Manual action by NON-TRUSTED test actor: invite/add a bot accor: grant Administrator or dangerous perms via role/member update (admin_permissount (bot_add).
+   - Manual action by NON-TRUSTED test action_grant).
+   - Manual action by NON-TRUSTED test actor: create, update, and delete a temporary text channel.
+   - Manual action by NON-TRUSTED test actor: create, update, and delete a temporary role.
+   - Manual action by NON-TRUSTED test actor: create, update, and delete a temporary webhook.
+   - Manual action by NON-TRUSTED test actor: change guild name or similar guild setting (guild_update).
+   - ^antinuke incidents 10
+   Expected:
+   - Incidents show entries for each triggered event family.
+   - Incident reason includes threshold/mixed-score trigger context.
+   - Anti-nuke logs contain actor, target, event, and response details.
+
+7. Mode behavior validation: alert, contain, ban
+   Commands:
+   - ^antinuke mode alert
+   - Trigger one destructive action as NON-TRUSTED actor.
+   - ^antinuke incidents 5
+   - ^antinuke mode contain
+   - Trigger one destructive action as NON-TRUSTED actor.
+   - ^antinuke incidents 5
+   - ^antinuke mode ban
+   - Trigger one destructive action as NON-TRUSTED actor on an account below bot hierarchy.
+   - ^antinuke incidents 5
+   - ^antinuke mode contain
+   Expected:
+   - Alert mode records incidents without applying punishment.
+   - Contain mode strips dangerous roles or removes bot actors when possible.
+   - Ban mode attempts to ban untrusted actor (if hierarchy permits).
+
+8. Freeze handling and cleanup
+   Commands:
+   - ^antinuke status
+   - ^antinuke resetfreeze
+   - ^antinuke status
+   - ^antinuke disable
+   - ^antinuke status
+   Expected:
+   - Active freeze is visible before reset when triggered.
+   - resetfreeze clears emergency freeze state.
+   - disable turns anti-nuke off cleanly.

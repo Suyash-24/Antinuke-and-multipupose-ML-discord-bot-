@@ -1,0 +1,92 @@
+Aegis AutoMod Smoke Test Plan
+=
+
+1. Log and baseline setup
+   Commands:
+   - ^modlog #mod-log
+   - ^messagelog #message-log
+   - ^serverlog #server-log
+   - ^automod show
+   Expected:
+   - All log channels are acknowledged by the bot.
+   - AutoMod overview panel is visible with current values.
+
+2. Punishment ladder precondition
+   Commands:
+   - ^punishment 2 warn
+   - ^punishment 4 mute 10m
+   - ^punishment 6 kick
+   - ^punishment 8 softban
+   - ^punishment 10 ban 1h
+   Expected:
+   - Punishment table shows all configured thresholds.
+   - No AutoMod command rejects with missing punishments.
+
+3. Enable Vortex-style AutoMod controls
+   Commands:
+   - ^automod antiinvite 2
+   - ^automod antireferral 2
+   - ^automod anticopypasta 2
+   - ^automod antieveryone 1
+   - ^automod maxmentions 4
+   - ^automod maxrolementions 2
+   - ^automod maxlines 6
+   - ^automod antiduplicate 4 2 1
+   - ^automod resolvelinks on
+   - ^automod autodehoist !
+   - ^automod antiraid on
+   - ^automod show
+   Expected:
+   - Snapshot shows anti-copypasta, resolve-links, and dehoist settings enabled.
+   - Duplicate filter shows strike threshold 4 and delete threshold 2.
+
+4. Invite whitelist and custom filters
+   Commands:
+   - ^automod whitelist add 123456789012345678
+   - ^automod whitelist show
+   - ^automod filter add badads 3 "earn money fast" *nitro* `free\s+gift`
+   - ^automod filter list
+   Expected:
+   - Whitelist includes the configured guild ID.
+   - Filter list includes badads with 3 strikes and all patterns.
+
+5. Functional trigger checks (use a non-exempt test member)
+   Commands:
+   - Send an external Discord invite in chat.
+   - Send a referral short-link in chat (for example bit.ly link).
+   - Send @everyone or @here from a member without mention-everyone permission.
+   - Send a message that mentions 5+ users.
+   - Send a message that mentions 3+ roles.
+   - Send a message with more than 6 lines.
+   - Send the same normalized message at least 4 times quickly.
+   - Send a known copypasta sample (for example Navy Seal opener).
+   - Send text matching the custom filter (for example earn money fast).
+   - Send a redirect link that eventually resolves to an invite or referral URL.
+   - ^check @test-user
+   Expected:
+   - Messages are deleted where applicable and strikes are added.
+   - Mod logs show combined AutoMod reasons when multiple rules hit one message.
+   - Check command confirms strike growth for the test member.
+
+6. Raid mode and dehoist checks
+   Commands:
+   - Trigger rapid joins in a test guild to cross the anti-raid threshold.
+   - Confirm raid mode auto-enables and blocks new joins.
+   - Wait beyond quiet window and verify raid mode auto-disables on next join.
+   - Change a test member nickname to a hoisted prefix (for example !!!Name).
+   Expected:
+   - Server logs include raid mode enable and disable transitions.
+   - Blocked join events are logged while raid mode is active.
+   - Hoisted nickname is adjusted by auto-dehoist.
+
+7. Cleanup
+   Commands:
+   - ^automod whitelist remove 123456789012345678
+   - ^automod filter remove badads
+   - ^automod autodehoist off
+   - ^automod resolvelinks off
+   - ^automod antiraid off
+   - ^automod show
+   Expected:
+   - Temporary test filter and whitelist entries are removed.
+   - Overview reflects cleanup settings.
