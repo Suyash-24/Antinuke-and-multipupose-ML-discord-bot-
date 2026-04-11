@@ -12,6 +12,7 @@ from discord.ext import commands
 from aegis.bot import AegisBot
 from aegis.checks import require_antinuke_control
 from aegis.models import (
+    AntiNukeCanaryAssetType,
     AntiNukeEventType,
     AntiNukeMode,
     AntiNukeThresholdConfig,
@@ -91,6 +92,17 @@ EVENT_ALIASES.update(
         "webhookdelete": AntiNukeEventType.WEBHOOK_DELETE,
         "webhookupdate": AntiNukeEventType.WEBHOOK_UPDATE,
         "guildupdate": AntiNukeEventType.GUILD_UPDATE,
+    }
+)
+
+CANARY_TRIP_EVENTS = frozenset(
+    {
+        AntiNukeEventType.CHANNEL_DELETE,
+        AntiNukeEventType.CHANNEL_UPDATE,
+        AntiNukeEventType.ROLE_DELETE,
+        AntiNukeEventType.ROLE_UPDATE,
+        AntiNukeEventType.WEBHOOK_DELETE,
+        AntiNukeEventType.WEBHOOK_UPDATE,
     }
 )
 
@@ -419,6 +431,214 @@ class AntiNukeCog(commands.Cog):
             and self.bot.permissions_are_dangerous(role.permissions)
             and role < me.top_role
         ]
+
+    def _canary_capability_gaps(self, guild: discord.Guild) -> list[str]:
+        me = guild.me
+        if me is None:
+            return ["Aegis could not resolve its server member state."]
+
+        permissions = me.guild_permissions
+        gaps: list[str] = []
+        if not permissions.manage_roles:
+            gaps.append("Missing Manage Roles.")
+        if not permissions.manage_channels:
+            gaps.append("Missing Manage Channels.")
+        if not permissions.manage_webhooks:
+            gaps.append("Missing Manage Webhooks.")
+        return gaps
+
+    def _canary_suffix(self, guild: discord.Guild) -> str:
+        return f"{guild.id % 10000:04d}-{utcnow().strftime('%H%M%S')}"
+
+    async def _delete_canary_assets(
+        self,
+        guild: discord.Guild,
+        assets: list,
+        *,
+        reason: str,
+    ) -> tuple[list[str], list[str]]:
+        notes: list[str] = []
+        errors: list[str] = []
+
+        webhook_assets = [
+            asset for asset in assets if asset.asset_type is AntiNukeCanaryAssetType.WEBHOOK
+        ]
+        if webhook_assets:
+            try:
+                webhooks = await guild.webhooks()
+            except discord.HTTPException as error:
+                errors.append(f"Failed to load webhooks for canary cleanup: {error}")
+                webhooks = []
+
+            for asset in webhook_assets:
+                webhook = discord.utils.get(webhooks, id=asset.target_id)
+                if webhook is None:
+                    notes.append("Webhook canary was already absent.")
+                    continue
+                try:
+                    await webhook.delete(reason=reason)
+                    notes.append("Removed webhook canary.")
+                except discord.HTTPException as error:
+                    errors.append(f"Failed to remove webhook canary: {error}")
+
+        channel_assets = [
+            asset for asset in assets if asset.asset_type is AntiNukeCanaryAssetType.CHANNEL
+        ]
+        for asset in channel_assets:
+            channel = guild.get_channel(asset.target_id)
+            if channel is None:
+                notes.append("Channel canary was already absent.")
+                continue
+            try:
+                await channel.delete(reason=reason)
+                notes.append("Removed channel canary.")
+            except discord.HTTPException as error:
+                errors.append(f"Failed to remove channel canary: {error}")
+
+        role_assets = [asset for asset in assets if asset.asset_type is AntiNukeCanaryAssetType.ROLE]
+        for asset in role_assets:
+            role = guild.get_role(asset.target_id)
+            if role is None:
+                notes.append("Role canary was already absent.")
+                continue
+            try:
+                await role.delete(reason=reason)
+                notes.append("Removed role canary.")
+            except discord.HTTPException as error:
+                errors.append(f"Failed to remove role canary: {error}")
+
+        return notes, errors
+
+    async def _provision_canary_assets(
+        self,
+        guild: discord.Guild,
+        *,
+        reason: str,
+    ) -> tuple[list[str], list[str]]:
+        gaps = self._canary_capability_gaps(guild)
+        if gaps:
+            return [], gaps
+
+        suffix = self._canary_suffix(guild)
+        now = utcnow()
+        created_notes: list[str] = []
+
+        role: discord.Role | None = None
+        channel: discord.TextChannel | None = None
+        webhook: discord.Webhook | None = None
+
+        async def rollback_partial() -> None:
+            if webhook is not None:
+                try:
+                    await webhook.delete(reason=reason)
+                except discord.HTTPException:
+                    pass
+            if channel is not None:
+                try:
+                    await channel.delete(reason=reason)
+                except discord.HTTPException:
+                    pass
+            if role is not None:
+                try:
+                    await role.delete(reason=reason)
+                except discord.HTTPException:
+                    pass
+
+        try:
+            role_permissions = discord.Permissions(
+                manage_guild=True,
+                manage_roles=True,
+                manage_channels=True,
+                manage_webhooks=True,
+                ban_members=True,
+                kick_members=True,
+            )
+            role = await guild.create_role(
+                name=f"Aegis Canary Role {suffix}",
+                permissions=role_permissions,
+                hoist=False,
+                mentionable=False,
+                reason=reason,
+            )
+
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            }
+            if guild.me is not None:
+                overwrites[guild.me] = discord.PermissionOverwrite(
+                    view_channel=True,
+                    read_message_history=True,
+                    send_messages=True,
+                    manage_webhooks=True,
+                )
+
+            channel = await guild.create_text_channel(
+                name=f"aegis-canary-{suffix}",
+                topic="Aegis anti-nuke canary trap. Do not modify.",
+                overwrites=overwrites,
+                reason=reason,
+            )
+
+            webhook = await channel.create_webhook(
+                name=f"Aegis Canary Webhook {suffix}",
+                reason=reason,
+            )
+        except discord.HTTPException as error:
+            await rollback_partial()
+            return [], [f"Failed to provision canary assets: {error}"]
+
+        await self.bot.db.upsert_antinuke_canary_asset(
+            guild.id,
+            AntiNukeCanaryAssetType.ROLE,
+            role.id,
+            parent_channel_id=None,
+            created_at=now,
+        )
+        await self.bot.db.upsert_antinuke_canary_asset(
+            guild.id,
+            AntiNukeCanaryAssetType.CHANNEL,
+            channel.id,
+            parent_channel_id=None,
+            created_at=now,
+        )
+        await self.bot.db.upsert_antinuke_canary_asset(
+            guild.id,
+            AntiNukeCanaryAssetType.WEBHOOK,
+            webhook.id,
+            parent_channel_id=channel.id,
+            created_at=now,
+        )
+
+        created_notes.append(f"Role canary: {role.mention}")
+        created_notes.append(f"Channel canary: {channel.mention}")
+        created_notes.append(f"Webhook canary: `{webhook.id}`")
+        return created_notes, []
+
+    async def _rotate_canary_assets(
+        self,
+        guild: discord.Guild,
+        *,
+        reason: str,
+    ) -> tuple[list[str], list[str]]:
+        assets = await self.bot.db.list_antinuke_canary_assets(guild.id)
+        teardown_notes, teardown_errors = await self._delete_canary_assets(guild, assets, reason=reason)
+        await self.bot.db.clear_antinuke_canary_assets(guild.id)
+        provision_notes, provision_errors = await self._provision_canary_assets(guild, reason=reason)
+        return teardown_notes + provision_notes, teardown_errors + provision_errors
+
+    def _canary_asset_type_for_event(
+        self,
+        event_type: AntiNukeEventType,
+    ) -> AntiNukeCanaryAssetType | None:
+        mapping = {
+            AntiNukeEventType.ROLE_UPDATE: AntiNukeCanaryAssetType.ROLE,
+            AntiNukeEventType.ROLE_DELETE: AntiNukeCanaryAssetType.ROLE,
+            AntiNukeEventType.CHANNEL_UPDATE: AntiNukeCanaryAssetType.CHANNEL,
+            AntiNukeEventType.CHANNEL_DELETE: AntiNukeCanaryAssetType.CHANNEL,
+            AntiNukeEventType.WEBHOOK_UPDATE: AntiNukeCanaryAssetType.WEBHOOK,
+            AntiNukeEventType.WEBHOOK_DELETE: AntiNukeCanaryAssetType.WEBHOOK,
+        }
+        return mapping.get(event_type)
 
     async def _apply_contain(
         self,
@@ -787,6 +1007,48 @@ class AntiNukeCog(commands.Cog):
         if self.bot.user is not None and event.actor_id == self.bot.user.id:
             return
 
+        if (
+            settings.antinuke_canary_enabled
+            and event.target_id is not None
+            and event.event_type in CANARY_TRIP_EVENTS
+        ):
+            canary_asset = await self.bot.db.find_antinuke_canary_asset(entry.guild.id, event.target_id)
+            if canary_asset is not None:
+                event.evidence["canary"] = {
+                    "asset_type": canary_asset.asset_type.value,
+                    "target_id": canary_asset.target_id,
+                    "event_type": event.event_type.value,
+                }
+                event.summary = (
+                    f"Canary trap tripped: {canary_asset.asset_type.value} canary touched "
+                    f"by `{event.event_type.value}`."
+                )
+                await self._handle_trigger(
+                    event,
+                    mode=settings.antinuke_mode,
+                    trigger_reason=(
+                        f"Canary {canary_asset.asset_type.value} was touched, so Aegis treated this as a "
+                        "high-confidence hostile signal."
+                    ),
+                    event_count=1,
+                    mixed_score=max(MIXED_SCORE_LIMIT, event.weight),
+                )
+
+                _, rotation_errors = await self._rotate_canary_assets(
+                    entry.guild,
+                    reason="Aegis anti-nuke canary re-arm after trigger",
+                )
+                if rotation_errors:
+                    await self.bot.send_log(
+                        entry.guild,
+                        LogType.ANTINUKE,
+                        "Canary Re-Arm Failed",
+                        "Aegis handled a canary incident but could not fully re-arm canary assets.",
+                        tone="warning",
+                        fields=[("Details", "\n".join(rotation_errors[:6]))],
+                    )
+                return
+
         thresholds = await self._resolve_thresholds(entry.guild.id)
         threshold = thresholds[event.event_type]
         if not threshold.enabled:
@@ -982,6 +1244,7 @@ class AntiNukeCog(commands.Cog):
         settings = await self.bot.db.fetch_guild_settings(ctx.guild.id)
         thresholds = await self._resolve_thresholds(ctx.guild.id)
         trust_entries = await self.bot.db.list_antinuke_trust_entries(ctx.guild.id)
+        canary_assets = await self.bot.db.list_antinuke_canary_assets(ctx.guild.id)
         freeze_until = await self.bot.get_antinuke_freeze_until(ctx.guild.id)
         degraded_reasons = self._degraded_reasons(ctx.guild)
 
@@ -1005,6 +1268,38 @@ class AntiNukeCog(commands.Cog):
         if len(degraded_reasons) > 5:
             health_detail = f"{health_detail}\n...and {len(degraded_reasons) - 5} more."
 
+        canary_by_type = {asset.asset_type: asset for asset in canary_assets}
+        canary_lines: list[str] = []
+        role_asset = canary_by_type.get(AntiNukeCanaryAssetType.ROLE)
+        channel_asset = canary_by_type.get(AntiNukeCanaryAssetType.CHANNEL)
+        webhook_asset = canary_by_type.get(AntiNukeCanaryAssetType.WEBHOOK)
+
+        if role_asset is not None:
+            role = ctx.guild.get_role(role_asset.target_id)
+            canary_lines.append(
+                f"Role: {role.mention if role else f'`{role_asset.target_id}` (missing)'}"
+            )
+        else:
+            canary_lines.append("Role: missing")
+
+        if channel_asset is not None:
+            channel = ctx.guild.get_channel(channel_asset.target_id)
+            canary_lines.append(
+                f"Channel: {channel.mention if channel else f'`{channel_asset.target_id}` (missing)'}"
+            )
+        else:
+            canary_lines.append("Channel: missing")
+
+        if webhook_asset is not None:
+            canary_lines.append(f"Webhook: `{webhook_asset.target_id}`")
+        else:
+            canary_lines.append("Webhook: missing")
+
+        canary_ready = len(canary_assets) == 3
+        canary_state = "Enabled (armed)" if settings.antinuke_canary_enabled and canary_ready else "Enabled (degraded)"
+        if not settings.antinuke_canary_enabled:
+            canary_state = "Disabled"
+
         await ctx.send(
             view=build_panel(
                 "Anti-Nuke Status",
@@ -1018,6 +1313,8 @@ class AntiNukeCog(commands.Cog):
                     ("Log Channel", self._describe_log_channel(ctx.guild, settings.antinuke_log_channel_id)),
                     ("Health", health_line),
                     ("Health Detail", health_detail),
+                    ("Canary Trap", canary_state),
+                    ("Canary Assets", "\n".join(canary_lines)),
                     ("Trusted Entries", "\n".join(trust_preview) if trust_preview else "Owner only"),
                     ("Thresholds", "\n".join(threshold_lines)),
                 ],
@@ -1090,6 +1387,154 @@ class AntiNukeCog(commands.Cog):
                 "Aegis saved the anti-nuke log destination.",
                 tone="success",
                 fields=[("Channel", channel.mention if channel else "Inherited fallback")],
+            )
+        )
+
+    @antinuke.group(name="canary", invoke_without_command=True)
+    @require_antinuke_control()
+    async def antinuke_canary(self, ctx: commands.Context[AegisBot]) -> None:
+        await self.antinuke_canary_status(ctx)
+
+    @antinuke_canary.command(name="status")
+    @require_antinuke_control()
+    async def antinuke_canary_status(self, ctx: commands.Context[AegisBot]) -> None:
+        settings = await self.bot.db.fetch_guild_settings(ctx.guild.id)
+        assets = await self.bot.db.list_antinuke_canary_assets(ctx.guild.id)
+        capability_gaps = self._canary_capability_gaps(ctx.guild)
+
+        assets_by_type = {asset.asset_type: asset for asset in assets}
+        role_asset = assets_by_type.get(AntiNukeCanaryAssetType.ROLE)
+        channel_asset = assets_by_type.get(AntiNukeCanaryAssetType.CHANNEL)
+        webhook_asset = assets_by_type.get(AntiNukeCanaryAssetType.WEBHOOK)
+
+        role_line = "missing"
+        if role_asset is not None:
+            role = ctx.guild.get_role(role_asset.target_id)
+            role_line = role.mention if role else f"`{role_asset.target_id}` (missing)"
+
+        channel_line = "missing"
+        if channel_asset is not None:
+            channel = ctx.guild.get_channel(channel_asset.target_id)
+            channel_line = channel.mention if channel else f"`{channel_asset.target_id}` (missing)"
+
+        webhook_line = f"`{webhook_asset.target_id}`" if webhook_asset is not None else "missing"
+        armed = len(assets_by_type) == 3
+        status_line = "Enabled (armed)" if settings.antinuke_canary_enabled and armed else "Enabled (degraded)"
+        if not settings.antinuke_canary_enabled:
+            status_line = "Disabled"
+
+        created_at = None
+        if assets:
+            created_at = min(datetime.fromisoformat(asset.created_at) for asset in assets)
+
+        await ctx.send(
+            view=build_panel(
+                "Anti-Nuke Canary",
+                "Canary trap state and decoy asset health.",
+                tone="success" if settings.antinuke_canary_enabled and armed else "warning",
+                fields=[
+                    ("Status", status_line),
+                    ("Anti-Nuke Enabled", "Yes" if settings.antinuke_enabled else "No"),
+                    ("Role Canary", role_line),
+                    ("Channel Canary", channel_line),
+                    ("Webhook Canary", webhook_line),
+                    ("Last Armed", format_timestamp(created_at, "R") if created_at else "Not armed"),
+                    (
+                        "Capability Gaps",
+                        "\n".join(capability_gaps) if capability_gaps else "All required permissions available.",
+                    ),
+                ],
+            )
+        )
+
+    @antinuke_canary.command(name="enable")
+    @require_antinuke_control()
+    async def antinuke_canary_enable(self, ctx: commands.Context[AegisBot]) -> None:
+        notes, errors = await self._rotate_canary_assets(
+            ctx.guild,
+            reason="Aegis anti-nuke canary enable",
+        )
+        if errors:
+            await self.bot.db.update_guild_settings(ctx.guild.id, antinuke_canary_enabled=0)
+            await ctx.send(
+                view=build_panel(
+                    "Canary Enable Failed",
+                    "Aegis could not fully provision canary trap assets.",
+                    tone="danger",
+                    fields=[("Errors", "\n".join(errors[:8]))],
+                )
+            )
+            return
+
+        await self.bot.db.update_guild_settings(ctx.guild.id, antinuke_canary_enabled=1)
+        await ctx.send(
+            view=build_panel(
+                "Canary Trap Enabled",
+                "Aegis armed decoy assets and will treat any canary touch as a high-confidence hostile signal.",
+                tone="success",
+                fields=[("Assets", "\n".join(notes))],
+            )
+        )
+
+    @antinuke_canary.command(name="disable")
+    @require_antinuke_control()
+    async def antinuke_canary_disable(self, ctx: commands.Context[AegisBot]) -> None:
+        assets = await self.bot.db.list_antinuke_canary_assets(ctx.guild.id)
+        notes, errors = await self._delete_canary_assets(
+            ctx.guild,
+            assets,
+            reason="Aegis anti-nuke canary disable",
+        )
+        await self.bot.db.clear_antinuke_canary_assets(ctx.guild.id)
+        await self.bot.db.update_guild_settings(ctx.guild.id, antinuke_canary_enabled=0)
+
+        tone = "success" if not errors else "warning"
+        fields: list[tuple[str, str]] = []
+        if notes:
+            fields.append(("Cleanup", "\n".join(notes[:8])))
+        if errors:
+            fields.append(("Errors", "\n".join(errors[:8])))
+
+        await ctx.send(
+            view=build_panel(
+                "Canary Trap Disabled",
+                "Aegis disabled canary enforcement for this server.",
+                tone=tone,
+                fields=fields,
+            )
+        )
+
+    @antinuke_canary.command(name="rotate")
+    @require_antinuke_control()
+    async def antinuke_canary_rotate(self, ctx: commands.Context[AegisBot]) -> None:
+        settings = await self.bot.db.fetch_guild_settings(ctx.guild.id)
+        if not settings.antinuke_canary_enabled:
+            raise commands.BadArgument("Canary trap is disabled. Run `^antinuke canary enable` first.")
+
+        notes, errors = await self._rotate_canary_assets(
+            ctx.guild,
+            reason="Aegis anti-nuke canary rotate",
+        )
+        if errors:
+            await ctx.send(
+                view=build_panel(
+                    "Canary Rotate Incomplete",
+                    "Aegis rotated canary assets with warnings.",
+                    tone="warning",
+                    fields=[
+                        ("Details", "\n".join(notes[:6])) if notes else ("Details", "No cleanup details."),
+                        ("Errors", "\n".join(errors[:8])),
+                    ],
+                )
+            )
+            return
+
+        await ctx.send(
+            view=build_panel(
+                "Canary Trap Rotated",
+                "Aegis replaced all canary assets with fresh decoys.",
+                tone="success",
+                fields=[("Assets", "\n".join(notes))],
             )
         )
 

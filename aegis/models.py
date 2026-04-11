@@ -44,6 +44,12 @@ class AntiNukeEventType(StrEnum):
     GUILD_UPDATE = "guild_update"
 
 
+class AntiNukeCanaryAssetType(StrEnum):
+    ROLE = "role"
+    CHANNEL = "channel"
+    WEBHOOK = "webhook"
+
+
 class TrustSubjectType(StrEnum):
     USER = "user"
     ROLE = "role"
@@ -79,6 +85,7 @@ class GuildSettings:
     antinuke_enabled: bool = False
     antinuke_mode: AntiNukeMode = AntiNukeMode.CONTAIN
     antinuke_freeze_minutes: int = 10
+    antinuke_canary_enabled: bool = False
 
 
 @dataclass(slots=True, frozen=True)
@@ -123,6 +130,15 @@ class AntiNukeTrustEntry:
     guild_id: int
     subject_id: int
     subject_type: TrustSubjectType
+
+
+@dataclass(slots=True, frozen=True)
+class AntiNukeCanaryAsset:
+    guild_id: int
+    asset_type: AntiNukeCanaryAssetType
+    target_id: int
+    parent_channel_id: int | None
+    created_at: str
 
 
 @dataclass(slots=True, frozen=True)

@@ -8,6 +8,8 @@ from typing import Any
 import aiosqlite
 
 from aegis.models import (
+    AntiNukeCanaryAsset,
+    AntiNukeCanaryAssetType,
     AntiNukeEventType,
     AntiNukeIncident,
     AntiNukeMode,
@@ -77,7 +79,8 @@ class Database:
                 raid_mode_previous_verification INTEGER,
                 antinuke_enabled INTEGER NOT NULL DEFAULT 0,
                 antinuke_mode TEXT NOT NULL DEFAULT 'contain',
-                antinuke_freeze_minutes INTEGER NOT NULL DEFAULT 10
+                antinuke_freeze_minutes INTEGER NOT NULL DEFAULT 10,
+                antinuke_canary_enabled INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS strike_punishments (
@@ -192,6 +195,18 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_antinuke_incidents_freeze
             ON antinuke_incidents (guild_id, freeze_expires_at);
+
+            CREATE TABLE IF NOT EXISTS antinuke_canary_assets (
+                guild_id INTEGER NOT NULL,
+                asset_type TEXT NOT NULL,
+                target_id INTEGER NOT NULL,
+                parent_channel_id INTEGER,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY (guild_id, asset_type)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_antinuke_canary_assets_target
+            ON antinuke_canary_assets (guild_id, target_id);
             """
         )
         await self._migrate_guild_settings_columns()
@@ -213,6 +228,7 @@ class Database:
             "antinuke_enabled": "INTEGER NOT NULL DEFAULT 0",
             "antinuke_mode": "TEXT NOT NULL DEFAULT 'contain'",
             "antinuke_freeze_minutes": "INTEGER NOT NULL DEFAULT 10",
+            "antinuke_canary_enabled": "INTEGER NOT NULL DEFAULT 0",
         }
 
         for column_name, definition in missing_columns.items():
@@ -244,6 +260,7 @@ class Database:
         payload["raid_mode_enabled"] = bool(payload["raid_mode_enabled"])
         payload["resolve_urls"] = bool(payload.get("resolve_urls", 0))
         payload["antinuke_enabled"] = bool(payload.get("antinuke_enabled", 0))
+        payload["antinuke_canary_enabled"] = bool(payload.get("antinuke_canary_enabled", 0))
         payload["antinuke_mode"] = AntiNukeMode(payload.get("antinuke_mode", AntiNukeMode.CONTAIN.value))
         if payload.get("dehoist_char") == "":
             payload["dehoist_char"] = None
@@ -282,6 +299,7 @@ class Database:
             "antinuke_enabled",
             "antinuke_mode",
             "antinuke_freeze_minutes",
+            "antinuke_canary_enabled",
         }
         invalid = set(fields) - allowed
         if invalid:
@@ -733,6 +751,99 @@ class Database:
         deleted = cursor.rowcount if cursor.rowcount is not None else 0
         await self._conn().commit()
         return deleted > 0
+
+    async def list_antinuke_canary_assets(self, guild_id: int) -> list[AntiNukeCanaryAsset]:
+        cursor = await self._conn().execute(
+            """
+            SELECT guild_id, asset_type, target_id, parent_channel_id, created_at
+            FROM antinuke_canary_assets
+            WHERE guild_id = ?
+            ORDER BY asset_type ASC;
+            """,
+            (guild_id,),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        return [
+            AntiNukeCanaryAsset(
+                guild_id=int(row["guild_id"]),
+                asset_type=AntiNukeCanaryAssetType(row["asset_type"]),
+                target_id=int(row["target_id"]),
+                parent_channel_id=int(row["parent_channel_id"])
+                if row["parent_channel_id"] is not None
+                else None,
+                created_at=str(row["created_at"]),
+            )
+            for row in rows
+        ]
+
+    async def find_antinuke_canary_asset(
+        self,
+        guild_id: int,
+        target_id: int,
+    ) -> AntiNukeCanaryAsset | None:
+        cursor = await self._conn().execute(
+            """
+            SELECT guild_id, asset_type, target_id, parent_channel_id, created_at
+            FROM antinuke_canary_assets
+            WHERE guild_id = ? AND target_id = ?
+            LIMIT 1;
+            """,
+            (guild_id, target_id),
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
+            return None
+        return AntiNukeCanaryAsset(
+            guild_id=int(row["guild_id"]),
+            asset_type=AntiNukeCanaryAssetType(row["asset_type"]),
+            target_id=int(row["target_id"]),
+            parent_channel_id=int(row["parent_channel_id"])
+            if row["parent_channel_id"] is not None
+            else None,
+            created_at=str(row["created_at"]),
+        )
+
+    async def upsert_antinuke_canary_asset(
+        self,
+        guild_id: int,
+        asset_type: AntiNukeCanaryAssetType,
+        target_id: int,
+        *,
+        parent_channel_id: int | None,
+        created_at: datetime,
+    ) -> None:
+        await self._conn().execute(
+            """
+            INSERT INTO antinuke_canary_assets (
+                guild_id,
+                asset_type,
+                target_id,
+                parent_channel_id,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (guild_id, asset_type) DO UPDATE SET
+                target_id = excluded.target_id,
+                parent_channel_id = excluded.parent_channel_id,
+                created_at = excluded.created_at;
+            """,
+            (
+                guild_id,
+                asset_type.value,
+                target_id,
+                parent_channel_id,
+                created_at.isoformat(),
+            ),
+        )
+        await self._conn().commit()
+
+    async def clear_antinuke_canary_assets(self, guild_id: int) -> None:
+        await self._conn().execute(
+            "DELETE FROM antinuke_canary_assets WHERE guild_id = ?;",
+            (guild_id,),
+        )
+        await self._conn().commit()
 
     async def add_antinuke_incident(
         self,

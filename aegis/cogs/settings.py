@@ -260,6 +260,10 @@ class SettingsCog(commands.Cog):
                     ("Anti-Nuke", "Enabled" if settings.antinuke_enabled else "Disabled"),
                     ("Anti-Nuke Mode", settings.antinuke_mode.value),
                     (
+                        "Anti-Nuke Canary",
+                        "Enabled" if settings.antinuke_canary_enabled else "Disabled",
+                    ),
+                    (
                         "Anti-Nuke Freeze",
                         discord.utils.format_dt(antinuke_freeze, style="R") if antinuke_freeze else "Inactive",
                     ),
